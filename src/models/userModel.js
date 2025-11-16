@@ -27,9 +27,10 @@ const userSchema = new Schema(
       type :Boolean,
       default:false
     },
-
-    refreshToken: {
-      type: String,
+    globalRoles: {
+      type: [String],
+      enum : ["user", "super_admin", "merchant", "partner"],
+      default: ["user"],
     },
   },
   {
@@ -50,32 +51,6 @@ userSchema.methods.isPasswordCorrect = async function (password) {
   return await bcrypt.compare(password, this.password);
 };
 
-// Method to generate access token
-userSchema.methods.generateAccessToken = function () {
-  return jwt.sign(
-    {
-      _id: this._id,
-      email: this.email,
-      username: this.username,
-    },
-    process.env.ACCESS_TOKEN_SECRET,
-    {
-      expiresIn: process.env.ACCESS_TOKEN_EXPIRY,
-    }
-  );
-};
 
-// Method to generate refresh token
-userSchema.methods.generateRefreshToken = function () {
-  return jwt.sign(
-    {
-      _id: this._id,
-    },
-    process.env.REFRESH_TOKEN_SECRET,
-    {
-      expiresIn: process.env.REFRESH_TOKEN_EXPIRY,
-    }
-  );
-};
 
 export const User = mongoose.model("User", userSchema);

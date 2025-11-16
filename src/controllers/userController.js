@@ -3,30 +3,26 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { User } from "../models/userModel.js";
+import  {RefreshToken}  from "../models/refreshTokenModel.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { redisClient } from '../config/redisClient.js';
 import { transporter, sendEMail } from "../services/emailService.js";
+import {
+  signAccessToken,
+  signRefreshToken,
+  verifyRefreshToken
+} from "../utils/jwt.js";
+import { v4 as uuidv4 } from "uuid";
 
-const generateAccessAndRefreshTokens = async (user) => {
-  try {
-    // const user = await User.findById(user);
-    const accessToken = user.generateAccessToken();
-    const refreshToken = user.generateRefreshToken();
 
-    user.refreshToken = refreshToken;
-    await user.save({ validateBeforeSave: false });
+const COOKIE_NAME = process.env.COOKIE_NAME || "refresh_token";
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || ".mywebsite.com";
+const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
+const REFRESH_DAYS = parseInt(process.env.REFRESH_TOKEN_EXPIRY || "30", 10)
 
-    return { accessToken, refreshToken };
-  } catch (error) {
-    throw new ApiError(
-      500,
-      "Something went wrong while generating refresh and access token"
-    );
-  }
-};
-
+// Register User
 const registerUser = asyncHandler(async (req, res) => {
   const { email, username, password } = req.body;
   // Checking if all required details are included or not. if not throw error
@@ -146,6 +142,7 @@ const registerUser = asyncHandler(async (req, res) => {
     email,
     password,
     username: username.toLowerCase(),
+    globalRoles: ["user"],
   });
 
   const createdUser = await User.findById(user._id).select(
@@ -160,7 +157,7 @@ const registerUser = asyncHandler(async (req, res) => {
     .status(201)
     .json(new ApiResponse(200, createdUser, "User created and OTP sent successfully"));
 });
-
+// Login User
 const loginUser = asyncHandler(async (req, res) => {
   const { email, username, password } = req.body;
 
@@ -185,97 +182,127 @@ const loginUser = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Please verify your email before logging in");
   }
 
-  const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
-    user
-  );
+
+  const accessToken = signAccessToken({
+    sub: user._id.toString(),
+    email: user.email,
+    roles: user.globalRoles
+  });
+
+  const tokenId = uuidv4();
+  const refreshToken = signRefreshToken({
+    tokenId,
+    sub: user._id.toString()
+  });
+
+  const expiresAt = new Date(Date.now() + REFRESH_DAYS * 86400000);
+
 
   const loggedInUser = await User.findById(user._id).select(
-    "-password -refreshToken"
+    "-password"
   );
 
-  const options = {
-    httpOnly: true,
-    secure: true,
-  };
+  await RefreshToken.create({
+    token: refreshToken,
+    user: user._id,
+    userAgent: req.get("User-Agent") || "Unknown",
+    ip: req.ip,
+    expiresAt
+  });
 
   return res
     .status(200)
-    .cookie("accessToken", accessToken, options)
-    .cookie("refreshToken", refreshToken, options)
+    .cookie(COOKIE_NAME, refreshToken, {
+      httpOnly: true,
+      secure: COOKIE_SECURE,
+      sameSite: "none",
+      domain: COOKIE_DOMAIN,
+      path: "/",
+      maxAge: REFRESH_DAYS * 86400000
+    })
     .json(
       new ApiResponse(
         200,
         {
           user: loggedInUser,
           accessToken,
-          refreshToken,
         },
         "User logged In Successfully"
       )
     );
 });
-
+// Logout User
 const logoutUser = asyncHandler(async (req, res) => {
-  await User.findByIdAndUpdate(
-    req.user._id,
-    {
-      $unset: {
-        refreshToken: 1,
-      },
-    },
-    {
-      new: true,
-    }
-  );
+  const userId = req.user?._id;
+  if (!userId) throw new ApiError(401, "Unauthorized");
 
-  const options = {
+  // Delete all refresh tokens for the user (optional: you can delete only the cookie token)
+  await RefreshToken.deleteMany({ user: userId }).catch((e) => {
+    console.warn("Failed to delete refresh tokens:", e?.message || e);
+  });
+
+  // Clear cookie (use COOKIE_NAME)
+  res.clearCookie(COOKIE_NAME, {
     httpOnly: true,
-    secure: true,
-  };
+    secure: COOKIE_SECURE,
+    sameSite: "none",
+    domain: COOKIE_DOMAIN,
+    path: "/"
+  });
 
-  return res
-    .status(200)
-    .clearCookie("accessToken", options)
-    .clearCookie("refreshToken", options)
-    .json(new ApiResponse(200, {}, "User logged Out"));
+  return res.status(200).json(new ApiResponse(200, {}, "Logged out successfully"));
 });
-
+// Refresh Access Token
 const refreshAccessToken = asyncHandler(async (req, res) => {
-  const incomingRefreshToken =
-    req.cookies.refreshToken || req.body.refreshToken;
-
-  if (!incomingRefreshToken) {
-    throw new ApiError(401, "unauthorized request");
-  }
-
   try {
-    const decodedToken = jwt.verify(
-      incomingRefreshToken,
-      process.env.REFRESH_TOKEN_SECRET
-    );
+    const cookie = req.cookies[COOKIE_NAME];
+    if (!cookie) {
+      throw new ApiError(401, "Refresh token not found in cookies");
+    }
+    const payload = verifyRefreshToken(cookie);
+    const existing = await RefreshToken.findOne({ token: cookie });
+    if (!existing) {
+      throw new ApiError(401, "Existing refresh token not found");
+    }
 
-    const user = await User.findById(decodedToken?._id);
+    // Token rotation
+    const newTokenId = uuidv4();
+    const newRefreshToken = signRefreshToken({
+      tokenId: newTokenId,
+      sub: payload.sub
+    });
 
+    existing.replacedByToken = newRefreshToken;
+    await existing.save();
+
+    const expiresAt = new Date(Date.now() + REFRESH_DAYS * 86400000);
+    await RefreshToken.create({
+      token: newRefreshToken,
+      user: existing.user,
+      userAgent: req.get("User-Agent"),
+      ip: req.ip,
+      expiresAt
+    });
+
+    const user = await User.findById(payload.sub);
     if (!user) {
-      throw new ApiError(401, "Invalid refresh token");
+      throw new ApiError(401, "User not found");
     }
-
-    if (incomingRefreshToken !== user?.refreshToken) {
-      throw new ApiError(401, "Refresh token is expired or used");
-    }
-
-    const options = {
-      httpOnly: true,
-      secure: true,
-    };
-
-    const { accessToken, refreshToken: newRefreshToken } =
-      await generateAccessAndRefreshTokens(user._id);
-
+    const accessToken = signAccessToken({
+      sub: user._id.toString(),
+      email: user.email,
+      roles: user.globalRoles
+    });
     return res
       .status(200)
-      .cookie("accessToken", accessToken, options)
-      .cookie("refreshToken", newRefreshToken, options)
+      .cookie(COOKIE_NAME, newRefreshToken, {
+        httpOnly: true,
+        secure: COOKIE_SECURE,
+        sameSite: "none",
+        domain: COOKIE_DOMAIN,
+        path: "/",
+        maxAge: REFRESH_DAYS * 86400000
+      })
       .json(
         new ApiResponse(
           200,
@@ -287,7 +314,7 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     throw new ApiError(401, error?.message || "Invalid refresh token");
   }
 });
-
+// OTP Verification
 const otpVerification = asyncHandler(async (req, res) => {
   const { email, inputOtp } = req.body;
   if (
@@ -336,7 +363,7 @@ const otpVerification = asyncHandler(async (req, res) => {
   }
 
 });
-
+// Get User Profile
 const getUserProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);
 
@@ -353,5 +380,21 @@ const getUserProfile = asyncHandler(async (req, res) => {
   }
 });
 
+// Validate Access Token (for microservices)
+const validateAccessToken = asyncHandler(async (req, res) => {
+  // requireAuth middleware already validates token and attaches user
+  const user = req.user;
+  
+  return res.status(200).json(
+    new ApiResponse(200, {
+      id: user._id,
+      email: user.email,
+      username: user.username,
+      roles: user.globalRoles,
+      is_verified: user.is_verified
+    }, "Token is valid")
+  );
+});
 
-export { registerUser, loginUser, logoutUser, refreshAccessToken, otpVerification, getUserProfile };
+
+export { registerUser, loginUser, logoutUser, refreshAccessToken, otpVerification, getUserProfile, validateAccessToken };
