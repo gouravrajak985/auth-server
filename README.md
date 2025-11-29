@@ -1,4 +1,4 @@
-# Pugly Auth Server
+# Auth Server
 
 Multi-Platform SaaS Authentication System with JWT-based SSO, refresh token rotation, and role-based access control.
 
