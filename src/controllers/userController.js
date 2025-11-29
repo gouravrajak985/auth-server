@@ -396,5 +396,23 @@ const validateAccessToken = asyncHandler(async (req, res) => {
   );
 });
 
+// Check User (Check if email exists)
+const checkUser = asyncHandler(async (req, res) => {
+  const { email } = req.body;
 
-export { registerUser, loginUser, logoutUser, refreshAccessToken, otpVerification, getUserProfile, validateAccessToken };
+  if (!email || email.trim() === "") {
+    throw new ApiError(400, "Email is required");
+  }
+
+  const user = await User.findOne({ email: email.toLowerCase() });
+
+  return res.status(200).json(
+    new ApiResponse(200, {
+      exists: !!user,
+      email: email.toLowerCase()
+    }, user ? "User exists" : "User does not exist")
+  );
+});
+
+
+export { registerUser, loginUser, logoutUser, refreshAccessToken, otpVerification, getUserProfile, validateAccessToken, checkUser };

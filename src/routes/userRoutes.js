@@ -5,11 +5,12 @@ import {
   registerUser,
   refreshAccessToken,
   otpVerification,
-  validateAccessToken
+  validateAccessToken,
+  checkUser
 } from "../controllers/userController.js";
 import { requireAuth, requireRole } from "../middleware/authMiddleware.js";
 import { authLimiter, otpLimiter } from "../middleware/rateLimiter.js";
-import { validateRegistration, validateLogin, validateOTP } from "../middleware/validation.js";
+import { validateRegistration, validateLogin, validateOTP, validateEmailCheck } from "../middleware/validation.js";
 
 const router = Router();
 
@@ -356,6 +357,65 @@ router.route("/otpverification").post(otpLimiter, validateOTP, otpVerification);
  *         description: Invalid or expired token
  */
 router.route("/validate").get(requireAuth, validateAccessToken);
+
+/**
+ * @swagger
+ * /api/v1/users/check-user:
+ *   post:
+ *     summary: Check if user exists
+ *     description: Check if a user with the given email exists in the system
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: "test@example.com"
+ *     responses:
+ *       200:
+ *         description: Check completed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 statusCode:
+ *                   type: number
+ *                   example: 200
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "User exists"
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     exists:
+ *                       type: boolean
+ *                       example: true
+ *                     email:
+ *                       type: string
+ *                       example: "test@example.com"
+ *       400:
+ *         description: Validation error or email is required
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *             example:
+ *               statusCode: 400
+ *               success: false
+ *               message: "Validation failed: Please provide a valid email address"
+ */
+router.route("/check-user").post(validateEmailCheck, checkUser);
 
 /**
  * @swagger

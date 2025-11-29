@@ -64,3 +64,12 @@ export const validateOTP = [
     .withMessage('OTP must be exactly 6 digits'),
   handleValidationErrors
 ];
+
+// Email check validation
+export const validateEmailCheck = [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email address'),
+  handleValidationErrors
+];
