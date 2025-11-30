@@ -18,9 +18,13 @@ import { v4 as uuidv4 } from "uuid";
 
 
 const COOKIE_NAME = process.env.COOKIE_NAME || "refresh_token";
+const ACCESS_TOKEN_COOKIE_NAME = process.env.ACCESS_TOKEN_COOKIE_NAME || "access_token";
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || ".mywebsite.com";
 const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
-const REFRESH_DAYS = parseInt(process.env.REFRESH_TOKEN_EXPIRY || "30", 10)
+const REFRESH_DAYS = parseInt(process.env.REFRESH_TOKEN_EXPIRY || "30", 10);
+// Access token expiry in minutes (default 15 minutes)
+const ACCESS_TOKEN_EXPIRY_MINUTES = parseInt(process.env.ACCESS_TOKEN_EXPIRY?.replace('m', '') || "15", 10);
+const ACCESS_TOKEN_MAX_AGE = ACCESS_TOKEN_EXPIRY_MINUTES * 60 * 1000; // Convert to milliseconds
 
 // Register User
 const registerUser = asyncHandler(async (req, res) => {
@@ -220,12 +224,19 @@ const loginUser = asyncHandler(async (req, res) => {
       path: "/",
       maxAge: REFRESH_DAYS * 86400000
     })
+    .cookie(ACCESS_TOKEN_COOKIE_NAME, accessToken, {
+      httpOnly: true,
+      secure: COOKIE_SECURE,
+      sameSite: "none",
+      domain: COOKIE_DOMAIN,
+      path: "/",
+      maxAge: ACCESS_TOKEN_MAX_AGE
+    })
     .json(
       new ApiResponse(
         200,
         {
           user: loggedInUser,
-          accessToken,
         },
         "User logged In Successfully"
       )
@@ -241,8 +252,17 @@ const logoutUser = asyncHandler(async (req, res) => {
     console.warn("Failed to delete refresh tokens:", e?.message || e);
   });
 
-  // Clear cookie (use COOKIE_NAME)
+  // Clear refresh token cookie
   res.clearCookie(COOKIE_NAME, {
+    httpOnly: true,
+    secure: COOKIE_SECURE,
+    sameSite: "none",
+    domain: COOKIE_DOMAIN,
+    path: "/"
+  });
+
+  // Clear access token cookie
+  res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, {
     httpOnly: true,
     secure: COOKIE_SECURE,
     sameSite: "none",
@@ -304,10 +324,18 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
         path: "/",
         maxAge: REFRESH_DAYS * 86400000
       })
+      .cookie(ACCESS_TOKEN_COOKIE_NAME, accessToken, {
+        httpOnly: true,
+        secure: COOKIE_SECURE,
+        sameSite: "none",
+        domain: COOKIE_DOMAIN,
+        path: "/",
+        maxAge: ACCESS_TOKEN_MAX_AGE
+      })
       .json(
         new ApiResponse(
           200,
-          { accessToken, refreshToken: newRefreshToken },
+          {},
           "Access token refreshed"
         )
       );
