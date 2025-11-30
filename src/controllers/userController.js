@@ -182,7 +182,7 @@ const loginUser = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Please verify your email before logging in");
   }
 
-
+ // Generate access token and refresh token
   const accessToken = signAccessToken({
     sub: user._id.toString(),
     email: user.email,
@@ -212,7 +212,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
   return res
     .status(200)
-    .cookie(COOKIE_NAME, refreshToken, {
+    .cookie(COOKIE_NAME, refreshToken,  {
       httpOnly: true,
       secure: COOKIE_SECURE,
       sameSite: "none",
@@ -256,6 +256,7 @@ const logoutUser = asyncHandler(async (req, res) => {
 const refreshAccessToken = asyncHandler(async (req, res) => {
   try {
     const cookie = req.cookies[COOKIE_NAME];
+    console.log("Refresh token from cookie:", cookie);
     if (!cookie) {
       throw new ApiError(401, "Refresh token not found in cookies");
     }

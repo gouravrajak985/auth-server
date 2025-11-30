@@ -40,7 +40,7 @@ const corsOptions = {
     credentials: true,
 }
 // Applying CORS middleware
-app.use(cors(corsOptions));
+app.use(cors("*"));
 
 //middlewares
 app.use(express.json({ limit: "16kb" }))

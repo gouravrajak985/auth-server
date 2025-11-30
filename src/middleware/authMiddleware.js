@@ -6,6 +6,7 @@ import { verifyAccessToken } from "../utils/jwt.js";
 
 export const requireAuth = asyncHandler(async (req, _, next) => {
   const authHeader = req.headers.authorization;
+  console.log("Authorization Header:", authHeader);
   if (!authHeader) {
     throw new ApiError(401, "No authorization header provided");
   }
