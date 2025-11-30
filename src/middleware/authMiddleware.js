@@ -1,26 +1,34 @@
 import { ApiError } from "../utils/ApiError.js";
+import { ApiResponse } from "../utils/ApiResponse.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import jwt from "jsonwebtoken";
 import { User } from "../models/userModel.js";
 import { verifyAccessToken } from "../utils/jwt.js";
 
 export const requireAuth = asyncHandler(async (req, _, next) => {
-  const authHeader = req.headers.authorization;
-  console.log("Authorization Header:", authHeader);
-  if (!authHeader) {
-    throw new ApiError(401, "No authorization header provided");
-  }
-  // Extract Bearer token
-  const token = authHeader.split(" ")[1];
+  // Try to get access token from cookie first
+  const ACCESS_TOKEN_COOKIE_NAME = process.env.ACCESS_TOKEN_COOKIE_NAME || "access_token";
+  let token = req.cookies?.[ACCESS_TOKEN_COOKIE_NAME];
+
+  // Fallback to Authorization header for backward compatibility (optional)
   if (!token) {
-    throw new ApiError(401, "Invalid authorization format");
+    const authHeader = req.headers.authorization;
+    if (authHeader) {
+      token = authHeader.split(" ")[1];
+    }
   }
+
+  if (!token) {
+    throw new ApiError(401, "No access token provided");
+  }
+
   let payload;
   try {
     payload = verifyAccessToken(token); // Verify token signature + expiry
   } catch (err) {
     throw new ApiError(401, "Invalid or expired access token");
   }
+  
   const user = await User.findById(payload.sub).select(
     "-password"
   );
@@ -63,3 +71,4 @@ export const requireRole = (requiredRoles) => {
     next();
   };
 };
+
